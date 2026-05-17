@@ -1,4 +1,4 @@
-"""
+ws"""
 Sofim Financial Dashboard — Versione Refactorizzata
 Architettura modulare: config, utils, core, views
 """
