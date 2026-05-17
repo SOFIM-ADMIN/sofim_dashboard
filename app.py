@@ -1,4 +1,4 @@
-"""
+ws"""
 Sofim Financial Dashboard — Versione Refactorizzata
 Architettura modulare: config, utils, core, pages
 """
@@ -10,8 +10,8 @@ from config import MENU_ORDINE
 from data.loader import prepara_dati
 from core.alert_engine import calcola_alert
 
-from pages import controllo, alert, indici, ricavi, costi, clienti
-from pages import ce_riclassificato, stato_patrimoniale, pfn, dettaglio
+from views import controllo, alert, indici, ricavi, costi, clienti
+from views import ce_riclassificato, stato_patrimoniale, pfn, dettaglio
 
 # ---------------------------------------------------------------------------
 # CONFIGURAZIONE PAGINA
