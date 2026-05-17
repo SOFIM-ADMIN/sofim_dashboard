@@ -11,10 +11,25 @@ from utils.plots import create_alert_histogram
 
 def render(df_final: pd.DataFrame) -> None:
     st.title("🚨 Centro Alert & Scostamenti")
-    st.info("Configura le soglie e le categorie da monitorare, poi esamina gli scostamenti anno su anno.")
+    st.info("Configura le soglie, le categorie e l'anno di riferimento, poi esamina gli scostamenti.")
 
     st.subheader("⚙️ Configurazione Analisi")
-    col_c1, col_c2, col_c3 = st.columns([1, 1, 1])
+
+    # Selettore anno di riferimento
+    anni_disponibili = sorted(df_final["Anno"].unique(), reverse=True)
+    if len(anni_disponibili) < 2:
+        st.warning("Servono almeno 2 anni di dati per l'analisi degli scostamenti.")
+        return
+
+    col_anno, col_c1, col_c2 = st.columns([1, 1, 1])
+
+    with col_anno:
+        anno_rif = st.selectbox(
+            "📅 Anno di riferimento",
+            options=anni_disponibili[:-1],  # Esclude l'ultimo (più recente) perché confrontiamo con precedente
+            index=0,
+            help="Seleziona l'anno da confrontare con il precedente"
+        )
 
     with col_c1:
         soglia_gialla = st.slider(
@@ -30,28 +45,35 @@ def render(df_final: pd.DataFrame) -> None:
             help="Variazione dannosa superiore a questa % → alert rosso"
         )
 
-    with col_c3:
-        st.markdown("**Categorie da monitorare:**")
+    st.markdown("**Categorie da monitorare:**")
+    col_cat1, col_cat2, col_cat3, col_cat4 = st.columns(4)
+
+    with col_cat1:
         alert_ricavi = st.checkbox("📈 Ricavi", value=True, help="Aumento = positivo, Diminuzione = negativo")
+    with col_cat2:
         alert_costi = st.checkbox("📉 Costi", value=True, help="Diminuzione = positivo, Aumento = negativo")
-        alert_patrimonio = st.checkbox("🏦 Patrimonio", value=False, help="Variazioni sempre segnalate")
+    with col_cat3:
+        alert_attivita = st.checkbox("💰 Attività", value=False, help="Variazioni attività patrimoniali")
+    with col_cat4:
+        alert_passivita = st.checkbox("🏦 Passività", value=False, help="Variazioni passività patrimoniali")
 
     st.divider()
 
     tipi = []
     if alert_ricavi: tipi.append("RICAVI")
     if alert_costi: tipi.append("COSTI")
-    if alert_patrimonio: tipi.append("PATRIMONIO")
+    if alert_attivita: tipi.append("ATTIVITA")
+    if alert_passivita: tipi.append("PASSIVITA")
 
     if not tipi:
         st.warning("Seleziona almeno una categoria da monitorare.")
         return
 
     with st.spinner("Analisi scostamenti in corso..."):
-        df_alert = calcola_alert(df_final, soglia_gialla, soglia_rossa, tipi)
+        df_alert = calcola_alert(df_final, soglia_gialla, soglia_rossa, tipi, anno_rif)
 
     if df_alert.empty:
-        st.info("Dati insufficienti per il confronto anno su anno (servono almeno 2 anni).")
+        st.info("Dati insufficienti per il confronto anno su anno.")
         return
 
     n_critici = len(df_alert[df_alert["Stato"] == "🔴 CRITICO"])
@@ -63,7 +85,7 @@ def render(df_final: pd.DataFrame) -> None:
     col1.metric("Conti Monitorati", len(df_alert))
     col2.metric("🔴 Critici", n_critici, delta_color="off")
     col3.metric("🟡 Attenzione", n_attenzione, delta_color="off")
-    col4.metric("🟢 Opportunita", n_opportunita, delta_color="off")
+    col4.metric("🟢 Opportunità", n_opportunita, delta_color="off")
     col5.metric("⚪ OK", n_ok, delta_color="off")
 
     st.markdown("""
@@ -72,13 +94,13 @@ def render(df_final: pd.DataFrame) -> None:
     </style>
     <div class="alert-legend">
     <b>Legenda:</b> 🔴 Critico = variazione dannosa forte | 🟡 Attenzione = variazione dannosa moderata | 
-    🟢 Opportunita = variazione favorevole | ⚪ OK = entro soglie
+    🟢 Opportunità = variazione favorevole | ⚪ OK = entro soglie
     </div>
     """, unsafe_allow_html=True)
 
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🔴 Critici", "🟡 Attenzione", "🟢 Opportunita", "📊 Tutti"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔴 Critici", "🟡 Attenzione", "🟢 Opportunità", "📊 Tutti"])
 
     for tab, stato_filter in [(tab1, "🔴 CRITICO"), (tab2, "🟡 ATTENZIONE"), (tab3, "🟢 OPPORTUNITA"), (tab4, None)]:
         with tab:
@@ -90,16 +112,62 @@ def render(df_final: pd.DataFrame) -> None:
             else:
                 df_view = df_alert.copy()
 
+            # NUOVO: Aggiungi riga TOTALE in fondo
+            totale = {
+                "Codice Conto": "",
+                "Descrizione Conto": "TOTALE",
+                "Cat_Safe": "",
+                "Anno_Cor": df_view["Anno_Cor"].iloc[0] if not df_view.empty else anno_rif,
+                "Importo_C": df_view["Importo_C"].sum(),
+                "Anno_Prec": df_view["Anno_Prec"].iloc[0] if not df_view.empty else anno_rif - 1,
+                "Importo_P": df_view["Importo_P"].sum(),
+                "Variazione_€": df_view["Variazione_€"].sum(),
+                "Variazione_%": 0.0,
+                "Impatt_o": "NEUTRO",
+                "Stato": "⚪ OK"
+            }
+
+            # Calcola variazione % del totale
+            base_tot = abs(totale["Importo_P"]) if totale["Importo_P"] != 0 else abs(totale["Importo_C"])
+            if base_tot != 0:
+                totale["Variazione_%"] = (totale["Variazione_€"] / base_tot) * 100
+
+            # Crea DataFrame con il totale e concatena in fondo
+            df_totale = pd.DataFrame([totale])
+            df_view = pd.concat([df_view, df_totale], ignore_index=True)
+
+            # NUOVO: Aggiungi colonna per evidenziare la riga totale
+            df_view["_is_totale"] = df_view["Descrizione Conto"] == "TOTALE"
+
+            # FIX: Usa .apply() con funzioni helper
+            def _apply_color_stato(col):
+                return [color_stato(v) for v in col]
+
+            def _apply_color_importo(col):
+                return [color_variazione_importo(v) for v in col]
+
+            def _apply_color_pct(col):
+                return [color_variazione_pct(v) for v in col]
+
+            # NUOVO: Funzione per evidenziare riga totale con sfondo grigio
+            def _highlight_totale(row):
+                if row["_is_totale"]:
+                    return ['background-color: #e9ecef; font-weight: bold;'] * len(row)
+                return [''] * len(row)
+
             styler = df_view.style.format({
                 "Importo_C": "€ {:,.2f}",
                 "Importo_P": "€ {:,.2f}",
                 "Variazione_€": "€ {:+,.2f}",
                 "Variazione_%": "{:+.1f}%"
-            }).map(color_stato, subset=["Stato"])                .map(color_variazione_importo, subset=["Variazione_€"])                .map(color_variazione_pct, subset=["Variazione_%"])
+            }).apply(_apply_color_stato, subset=["Stato"])              .apply(_apply_color_importo, subset=["Variazione_€"])              .apply(_apply_color_pct, subset=["Variazione_%"])              .apply(_highlight_totale, axis=1)
+
+            # Rimuovi colonna ausiliaria dalla visualizzazione
+            styler = styler.hide(subset=["_is_totale"], axis="columns")
 
             st.dataframe(styler, use_container_width=True, hide_index=True)
 
-            csv = df_view.to_csv(index=False).encode('utf-8')
+            csv = df_view.drop(columns=["_is_totale"]).to_csv(index=False).encode('utf-8')
             st.download_button(
                 label=f"📥 Scarica {stato_filter or 'Tutti'}",
                 data=csv,
@@ -115,8 +183,10 @@ def render(df_final: pd.DataFrame) -> None:
 
     st.subheader("🏆 Top 10 Scostamenti per Impatto")
 
-    top_critici = df_alert[df_alert["Stato"] == "🔴 CRITICO"].nlargest(5, "Variazione_%_abs")
+    top_critici = df_alert[df_alert["Stato"] == "🔴 CRITICO"].copy()
     if not top_critici.empty:
+        top_critici["_abs_var"] = top_critici["Variazione_%"].abs()
+        top_critici = top_critici.nlargest(5, "_abs_var")
         st.markdown("#### 🔴 Top Critici (da monitorare urgentemente)")
         import plotly.express as px
         fig_crit = px.bar(
@@ -127,14 +197,16 @@ def render(df_final: pd.DataFrame) -> None:
         fig_crit.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         st.plotly_chart(fig_crit, use_container_width=True)
 
-    top_opp = df_alert[df_alert["Stato"] == "🟢 OPPORTUNITA"].nlargest(5, "Variazione_%_abs")
+    top_opp = df_alert[df_alert["Stato"] == "🟢 OPPORTUNITA"].copy()
     if not top_opp.empty:
-        st.markdown("#### 🟢 Top Opportunita (variazioni favorevoli)")
+        top_opp["_abs_var"] = top_opp["Variazione_%"].abs()
+        top_opp = top_opp.nlargest(5, "_abs_var")
+        st.markdown("#### 🟢 Top Opportunità (variazioni favorevoli)")
         import plotly.express as px
         fig_opp = px.bar(
             top_opp, y="Descrizione Conto", x="Variazione_%", color="Impatt_o",
             color_discrete_map={"POSITIVO": "#28a745", "NEGATIVO": "#dc3545", "NEUTRO": "#ffc107"},
-            orientation="h", title="Top 5 opportunita", text="Variazione_%"
+            orientation="h", title="Top 5 opportunità", text="Variazione_%"
         )
         fig_opp.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         st.plotly_chart(fig_opp, use_container_width=True)

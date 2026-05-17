@@ -101,8 +101,12 @@ def create_radar_chart(categories, values_c, values_p, anno_sel, anno_prec):
 
 def create_alert_histogram(df_alert, soglia_gialla, soglia_rossa):
     """Istogramma distribuzione scostamenti."""
+    # Crea colonna temporanea con valore assoluto per filtro
+    df_plot = df_alert.copy()
+    df_plot["_var_pct_abs"] = df_plot["Variazione_%"].abs()
+
     fig = px.histogram(
-        df_alert[df_alert["Variazione_%_abs"] < 200],
+        df_plot[df_plot["_var_pct_abs"] < 200],
         x="Variazione_%",
         color="Stato",
         color_discrete_map={
